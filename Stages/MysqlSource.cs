@@ -29,123 +29,120 @@ public class MysqlSource
 	{
         if (settings == null) settings = Util.GetByName(Engine.GetConfig(), "mysql");
 
-        MySql.Data.MySqlClient.MySqlConnection conn;
-        MySql.Data.MySqlClient.MySqlCommand    cmd;
-
-        conn = new MySql.Data.MySqlClient.MySqlConnection();
-        cmd = new MySql.Data.MySqlClient.MySqlCommand();
-
-        conn.ConnectionString = settings.Attributes["connectionString"].Value;
-
-        conn.Open();
-        cmd.Connection = conn;
-
-        object result = null;
-
-        /*
-            mysql map details
-            [code/storeprocedure]:[table/scalar/nonquery]:[text/procedure name]
-        */
-
-        string[] resultMap = config.map.Split( new char[]{ ':' }, 3 );
-        
-        string ct = resultMap[0]; // call type
-        string rt = resultMap[1]; // return type
-        string mp = resultMap[2]; // mapping ( sql text or store procedure name )
-
-        if (!Validate(ct, validCodeTypes)) throw new Exception("Mysql bad call type: " + ct);
-        if (!Validate(rt, validResultTypes)) throw new Exception("Mysql bad result type: " + rt);
-
-        // command text
-        cmd.CommandText = mp;
-        
-        // command type     
-        if (ct == "code")
+        using (MySql.Data.MySqlClient.MySqlConnection conn = new MySql.Data.MySqlClient.MySqlConnection())
         {
-            cmd.CommandType = CommandType.Text;
-            cmd.Prepare();
-        }
-        else cmd.CommandType = CommandType.StoredProcedure;
+            conn.ConnectionString = settings.Attributes["connectionString"].Value;
+            conn.Open();
 
-        List<string> output_params = new List<string>();
-
-        // named parameters
-        for (int i = 0; i < config.stage.ChildNodes.Count; ++i)
-        {
-            XmlNode paramNode = config.stage.ChildNodes[i];
-            if (!Util.GetAttr(paramNode, "inplace", false))
-                if (Util.GetAttr(paramNode, "output",false))
-                {
-                    cmd.Parameters.Add(paramNode.Name, Convert(paramNode.Attributes["type"].Value));
-                    cmd.Parameters[paramNode.Name].Direction = ParameterDirection.Output;
-                    output_params.Add(paramNode.Name);
-                }
-                else Add(cmd, "@" + paramNode.Name, config.allParams[i]);
-        }
-        
-        if (rt == "table")
-        {
-            XmlDocument doc = new XmlDocument();
-            doc.AppendChild(doc.CreateNode(XmlNodeType.Element, "Root", ""));
-
-            MySqlDataReader reader = cmd.ExecuteReader();
-            DataToXML.Write(doc, reader);
-            reader.Close();
-
-            if (cmd.CommandText.StartsWith("select SQL_CALC_FOUND_ROWS"))
+            using (MySql.Data.MySqlClient.MySqlCommand cmd = new MySql.Data.MySqlClient.MySqlCommand())
             {
-                cmd.CommandText = "SELECT FOUND_ROWS()";
-                cmd.Parameters.Clear();
-                reader = cmd.ExecuteReader();
-                reader.Read();
-                doc.FirstChild.Attributes.Append(doc.CreateAttribute("found_rows")).Value = reader.GetInt32(0).ToString();
-                reader.Close();
+                cmd.Connection = conn;
+
+                object result = null;
+
+                /*
+                    mysql map details
+                    [code/storeprocedure]:[table/scalar/nonquery]:[text/procedure name]
+                */
+
+                string[] resultMap = config.map.Split(new char[] { ':' }, 3);
+
+                string ct = resultMap[0]; // call type
+                string rt = resultMap[1]; // return type
+                string mp = resultMap[2]; // mapping ( sql text or store procedure name )
+
+                if (!Validate(ct, validCodeTypes)) throw new Exception("Mysql bad call type: " + ct);
+                if (!Validate(rt, validResultTypes)) throw new Exception("Mysql bad result type: " + rt);
+
+                // command text
+                cmd.CommandText = mp;
+
+                // command type     
+                if (ct == "code")
+                {
+                    cmd.CommandType = CommandType.Text;
+                    cmd.Prepare();
+                }
+                else cmd.CommandType = CommandType.StoredProcedure;
+
+                List<string> output_params = new List<string>();
+
+                // named parameters
+                for (int i = 0; i < config.stage.ChildNodes.Count; ++i)
+                {
+                    XmlNode paramNode = config.stage.ChildNodes[i];
+                    if (!Util.GetAttr(paramNode, "inplace", false))
+                        if (Util.GetAttr(paramNode, "output", false))
+                        {
+                            cmd.Parameters.Add(paramNode.Name, Convert(paramNode.Attributes["type"].Value));
+                            cmd.Parameters[paramNode.Name].Direction = ParameterDirection.Output;
+                            output_params.Add(paramNode.Name);
+                        }
+                        else Add(cmd, "@" + paramNode.Name, config.allParams[i]);
+                }
+
+                if (rt == "table")
+                {
+                    XmlDocument doc = new XmlDocument();
+                    doc.AppendChild(doc.CreateNode(XmlNodeType.Element, "Root", ""));
+
+                    MySqlDataReader reader = cmd.ExecuteReader();
+                    DataToXML.Write(doc, reader);
+                    reader.Close();
+
+                    if (cmd.CommandText.StartsWith("select SQL_CALC_FOUND_ROWS"))
+                    {
+                        cmd.CommandText = "SELECT FOUND_ROWS()";
+                        cmd.Parameters.Clear();
+                        reader = cmd.ExecuteReader();
+                        reader.Read();
+                        doc.FirstChild.Attributes.Append(doc.CreateAttribute("found_rows")).Value = reader.GetInt32(0).ToString();
+                        reader.Close();
+                    }
+
+                    result = doc;
+                }
+                else if (rt == "list")
+                {
+                    MySqlDataReader reader = cmd.ExecuteReader();
+                    MemoryStream output = new MemoryStream();
+                    DataToList.Write(output, reader);
+                    reader.Close();
+
+                    result = output;
+                }
+                else if (rt == "scalar")
+                {
+                    XmlDocument doc = new XmlDocument();
+                    doc.AppendChild(doc.CreateNode(XmlNodeType.Element, "Root", ""));
+
+                    object callresult = cmd.ExecuteScalar();
+                    doc.FirstChild.AppendChild(doc.CreateNode(XmlNodeType.Text, "", ""));
+                    doc.FirstChild.FirstChild.Value = callresult.ToString();
+
+                    result = doc;
+                }
+                else if (rt == "nonquery")
+                {
+                    XmlDocument doc = new XmlDocument();
+                    doc.AppendChild(doc.CreateNode(XmlNodeType.Element, "Root", ""));
+
+                    int affected = cmd.ExecuteNonQuery();
+                    doc.FirstChild.Attributes.Append(doc.CreateAttribute("affected")).Value = affected.ToString();
+
+                    result = doc;
+                }
+
+                foreach (string param in output_params)
+                {
+                    XmlDocument doc = Util.Validate<XmlDocument>(result, "Output params for this request not supported");
+                    doc.FirstChild.Attributes.Append(
+                        doc.CreateAttribute(param)).Value = cmd.Parameters[param].Value.ToString();
+                }
+
+                return result;
             }
-
-            result = doc;
         }
-        else if (rt == "list")
-        {
-            MySqlDataReader reader = cmd.ExecuteReader();
-            MemoryStream output = new MemoryStream();
-            DataToList.Write(output, reader);
-            reader.Close();
-
-            result = output;
-        }
-        else if (rt == "scalar")
-        {
-            XmlDocument doc = new XmlDocument();
-            doc.AppendChild(doc.CreateNode(XmlNodeType.Element, "Root", ""));
-
-            object callresult = cmd.ExecuteScalar();
-            doc.FirstChild.AppendChild(doc.CreateNode(XmlNodeType.Text, "", ""));
-            doc.FirstChild.FirstChild.Value = callresult.ToString();
-
-            result = doc;
-        }
-        else if (rt == "nonquery")
-        {
-            XmlDocument doc = new XmlDocument();
-            doc.AppendChild(doc.CreateNode(XmlNodeType.Element, "Root", ""));
-
-            int affected = cmd.ExecuteNonQuery();
-            doc.FirstChild.Attributes.Append(doc.CreateAttribute("affected")).Value = affected.ToString();
-
-            result = doc;
-        }
-
-        foreach (string param in output_params)
-        {
-            XmlDocument doc = Util.Validate<XmlDocument>(result, "Output params for this request not supported");
-            doc.FirstChild.Attributes.Append(
-                doc.CreateAttribute(param)).Value = cmd.Parameters[param].Value.ToString();
-        }
-
-        cmd.Dispose();
-        conn.Close();
-
-        return result;
 	}
 
     private static bool Validate(string value, string[] types)

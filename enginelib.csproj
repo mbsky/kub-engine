@@ -42,7 +42,6 @@
     <Compile Include="Engine.cs" />
     <Compile Include="Log.cs" />
     <Compile Include="MyFilters.cs" />
-    <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Stages\CodeFilters.cs" />
     <Compile Include="Stages\FileSource.cs" />
     <Compile Include="Stages\MysqlSource.cs" />
@@ -51,6 +50,9 @@
     <Compile Include="Util\TableToData.cs" />
     <Compile Include="Util\Types.cs" />
     <Compile Include="Util\Util.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Properties\" />
   </ItemGroup>
   <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
